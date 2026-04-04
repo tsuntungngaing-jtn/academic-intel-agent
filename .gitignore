@@ -1,0 +1,6 @@
+.env
+__pycache__/
+.vscode/
+data/*.json
+*.openalex_state.json
+venv/
