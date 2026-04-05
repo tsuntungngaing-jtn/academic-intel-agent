@@ -13,3 +13,17 @@
 - OpenAlex API (Data)
 - DeepSeek API (AI Processor)
 - PostgreSQL (Storage)
+
+## 运行方式（仓库根目录）
+
+```bash
+pip install -r requirements.txt
+python main.py crawl          # OpenAlex → data/works_sample.jsonl（依赖 .env）
+python main.py analyze        # DeepSeek 分析 → final_report.jsonl / Markdown
+python main.py interactive    # 按编号浏览报告，可加 --cite 查引用
+python main.py figures path/to/paper.pdf "10.1234/zenodo.x"   # 启发式插图 → data/figures/
+```
+
+将 PDF 放在 `data/pdfs/{与 DOI 对应的文件名}.pdf`（文件名规则与 `utils.pdf_visuals.sanitize_doi_for_filename` 一致），则在 `analyze` 的深度报告阶段会对 ≥95 分论文自动抽图，并写入 `ai.extracted_figures` 与 `deep_dive_tech_report.md` 附图节。
+
+代码分层：`src/core`（配置与 LLM 传输）、`src/crawler`（OpenAlex）、`src/engine`（AI 流水线）、`src/storage`（JSONL/Markdown）、`src/ui`（交互）、`src/utils`（文本与控制台工具）。

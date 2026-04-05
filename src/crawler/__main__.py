@@ -1,4 +1,6 @@
-from crawler.client import main
+"""OpenAlex crawl (legacy entry; prefer ``python main.py crawl``)."""
+
+from storage.crawl_jsonl import run_crawl_main
 
 if __name__ == "__main__":
-    main()
+    run_crawl_main()
