@@ -10,6 +10,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional
 
@@ -22,6 +23,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_BASE_URL = "https://api.openalex.org"
 DEFAULT_TIMEOUT = (10, 60)  # connect, read
 MAX_PER_PAGE = 200
+
+
+def build_recent_publication_filter(days: int = 90) -> str:
+    """OpenAlex ``from_publication_date`` / ``to_publication_date`` filter (inclusive)."""
+    if days < 1:
+        days = 1
+    end = date.today()
+    start = end - timedelta(days=days)
+    return f"from_publication_date:{start.isoformat()},to_publication_date:{end.isoformat()}"
 
 
 class OpenAlexError(Exception):
@@ -167,6 +177,69 @@ class OpenAlexClient:
             yield from page
 
 
+def normalize_openalex_work_id(work_id: str) -> str:
+    """Accept OpenAlex URL or ``W123``-style id; return short id for API paths."""
+    s = (work_id or "").strip()
+    if not s:
+        raise ValueError("work_id is empty")
+    if "openalex.org/" in s:
+        tail = s.rstrip("/").split("/")[-1]
+        if tail:
+            return tail
+    return s
+
+
+def get_references(
+    work_id: str,
+    *,
+    limit: int = 5,
+    client: Optional[OpenAlexClient] = None,
+) -> list[dict[str, Any]]:
+    """
+    Return up to ``limit`` referenced works for the given work, in ``referenced_works`` order.
+
+    Each entry is a full OpenAlex work object from ``GET /works/{id}``.
+    """
+    c = client or OpenAlexClient()
+    wid = normalize_openalex_work_id(work_id)
+    data = c.get_json(f"/works/{wid}")
+    raw_refs = data.get("referenced_works")
+    if not isinstance(raw_refs, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for entry in raw_refs:
+        if len(out) >= limit:
+            break
+        if not isinstance(entry, str) or not entry.strip():
+            continue
+        rid = normalize_openalex_work_id(entry)
+        try:
+            w = c.get_json(f"/works/{rid}")
+        except OpenAlexError:
+            continue
+        out.append(w)
+    return out
+
+
+def get_cited_by(
+    work_id: str,
+    *,
+    limit: int = 5,
+    client: Optional[OpenAlexClient] = None,
+) -> list[dict[str, Any]]:
+    """
+    Return up to ``limit`` works that cite the given work (OpenAlex ``cites`` filter).
+    """
+    c = client or OpenAlexClient()
+    wid = normalize_openalex_work_id(work_id)
+    page = max(1, min(limit, MAX_PER_PAGE))
+    payload = c.get_json("/works", params={"filter": f"cites:{wid}", "per_page": page})
+    raw = payload.get("results")
+    if not isinstance(raw, list):
+        return []
+    return [x for x in raw if isinstance(x, dict)][:limit]
+
+
 def _state_path_for(out: Path) -> Path:
     return out.with_name(out.name + ".openalex_state.json")
 
@@ -269,7 +342,11 @@ def _configure_logging() -> None:
 
 
 def main() -> None:
-    """Example: fetch recent works (override with OPENALEX_FILTER / OPENALEX_SEARCH)."""
+    """
+    Fetch works: default to the last ``OPENALEX_RECENT_DAYS`` (90) days via
+    ``from_publication_date`` / ``to_publication_date``. ``OPENALEX_SEARCH`` is required
+    so results are keyword-bound at the API layer.
+    """
     try:
         from dotenv import load_dotenv
 
@@ -280,11 +357,28 @@ def main() -> None:
     _configure_logging()
     data_dir = Path(os.getenv("DATA_DIR", Path(__file__).resolve().parents[2] / "data"))
     out_file = data_dir / "works_sample.jsonl"
-    filter_expr = os.getenv("OPENALEX_FILTER", "publication_year:2024")
-    search = os.getenv("OPENALEX_SEARCH") or None
+
+    custom_filter = os.getenv("OPENALEX_FILTER", "").strip()
+    recent_days_raw = os.getenv("OPENALEX_RECENT_DAYS", "90").strip()
+    recent_days = int(recent_days_raw) if recent_days_raw.isdigit() else 90
+    filter_expr = custom_filter or build_recent_publication_filter(recent_days)
+
+    search = os.getenv("OPENALEX_SEARCH", "").strip() or None
+    if not search:
+        logger.error(
+            "未设置 OPENALEX_SEARCH。抓取必须与 search 关键词绑定；请在 .env 中设置 OPENALEX_SEARCH。"
+        )
+        raise SystemExit(1)
+
     max_n = os.getenv("OPENALEX_MAX_RECORDS")
     max_records = int(max_n) if max_n and max_n.isdigit() else 50
     resume = os.getenv("OPENALEX_RESUME", "0").strip().lower() not in ("0", "false", "no")
+
+    logger.info(
+        "crawl filter=%r search=%r (override filter with OPENALEX_FILTER if needed)",
+        filter_expr,
+        search,
+    )
 
     n = fetch_works_to_file(
         out_file,
