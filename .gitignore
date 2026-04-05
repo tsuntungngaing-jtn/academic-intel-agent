@@ -1,6 +1,15 @@
-.env
-__pycache__/
-.vscode/
-data/*.json
+# --- Python 后端拦截 ---
+.env                # 绝对不能传！里面有你的 DeepSeek API Key
+__pycache__/        # Python 运行产生的缓存垃圾
+venv/               # Python 的虚拟环境，太重了不传
+.vscode/            # 你的个人编辑器配置
+data/*.json         # 拦截原始数据（防止数据量过大撑爆 GitHub）
 *.openalex_state.json
-venv/
+
+# --- Node.js 前端拦截 (针对 academic-ui) ---
+node_modules/       # 零件包，绝对不传（最占空间）
+.next/              # Next.js 编译出的临时文件
+out/                # 导出的静态文件
+build/              # 构建产物
+.vercel             # 如果以后用 Vercel 部署产生的配置
+*.log               # 各种运行日志

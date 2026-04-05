@@ -1,3 +1,4 @@
+import { AnalyzePanel } from "@/components/AnalyzePanel";
 import { PaperCard, type PaperRecord } from "@/components/PaperCard";
 
 const sample: PaperRecord = {
@@ -27,6 +28,12 @@ export default function Home() {
         红装饰条；插图路径使用可选链，例如{" "}
         <code className="text-xs">data?.ai?.extracted_figures?.[0]</code>。
       </p>
+
+      <AnalyzePanel />
+
+      <h2 className="mb-2 font-serif text-lg font-semibold text-slate-950">
+        示例卡片
+      </h2>
       <PaperCard data={sample} />
     </main>
   );
