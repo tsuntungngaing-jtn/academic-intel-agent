@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import dataclass
 from typing import Optional
 
 
@@ -33,3 +34,13 @@ def resolve_research_interest(explicit: Optional[str] = None) -> str:
     if not line:
         raise SystemExit("研究需求为空，已退出。")
     return line
+
+
+@dataclass
+class InterestGenerator:
+    """Use CLI ``--interest`` as the starting keyword, then env / stdin fallbacks."""
+
+    start_keyword: Optional[str] = None
+
+    def resolve(self) -> str:
+        return resolve_research_interest(self.start_keyword)

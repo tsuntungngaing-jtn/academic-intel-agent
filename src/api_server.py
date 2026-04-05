@@ -21,12 +21,14 @@ import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -80,6 +82,56 @@ class ProxyConfigBody(BaseModel):
     https_proxy: Optional[str] = None
 
 
+class AnalyzeRequest(BaseModel):
+    """Fields passed through to ``submit_job.sh`` as positional args (interest, email, mode)."""
+
+    email: Optional[str] = Field(
+        default=None,
+        max_length=2048,
+        description="Full email for OPENALEX_MAILTO (e.g. user@xjtlu.edu.cn)",
+    )
+    interest: Optional[str] = Field(
+        default=None,
+        max_length=16000,
+        description="Research interest string for ``python main.py analyze --interest``",
+    )
+    mode: str = Field(
+        default="recent",
+        max_length=32,
+        description="``recent`` (追踪前沿) or ``related`` (深度探索)",
+    )
+
+
+def _sanitize_pass_through(value: Optional[str], *, max_len: int) -> str:
+    """
+    Normalize user input for argv passing (no shell involved in subprocess).
+
+    Strips control characters and collapses whitespace so Slurm/bash/Python are
+    not broken by newlines or NUL. For audit logs, use :func:`shlex.quote`.
+    """
+    if value is None:
+        return ""
+    s = value.strip()
+    if not s:
+        return ""
+    s = s.replace("\x00", "")
+    s = s.replace("\r", " ")
+    s = " ".join(s.split())
+    if len(s) > max_len:
+        s = s[:max_len]
+    return s
+
+
+def _sanitize_mode(value: Optional[str]) -> str:
+    """Allow only ``recent`` / ``related``; default ``recent``."""
+    if value is None:
+        return "recent"
+    s = _sanitize_pass_through(value, max_len=32).lower()
+    if s in ("recent", "related"):
+        return s
+    return "recent"
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -113,8 +165,31 @@ def set_proxy_config(body: ProxyConfigBody) -> dict[str, Optional[str]]:
 
 
 @app.post("/start_analyze")
-def start_analyze() -> dict[str, Any]:
+def start_analyze(
+    body: Optional[AnalyzeRequest] = Body(default=None),
+) -> dict[str, Any]:
     """Submit Slurm job via sbatch (analysis runs on compute node)."""
+    req = body if body is not None else AnalyzeRequest()
+    interest_s = _sanitize_pass_through(req.interest, max_len=16000)
+    email_s = _sanitize_pass_through(req.email, max_len=2048)
+    mode_s = _sanitize_mode(req.mode)
+
+    logger.info(
+        "[API] 模式锁定：%s，正在派单...",
+        mode_s,
+    )
+    logger.info(
+        "[API] 收到新订单：兴趣=%s, 邮箱=%s，正在派单至计算节点...",
+        interest_s or "(未填)",
+        email_s or "(未填)",
+    )
+    logger.debug(
+        "sbatch argv shell 等价: sbatch scripts/submit_job.sh %s %s %s",
+        shlex.quote(interest_s) if interest_s else "''",
+        shlex.quote(email_s) if email_s else "''",
+        shlex.quote(mode_s),
+    )
+
     root = hpc_project_root()
     script = root / "scripts" / "submit_job.sh"
     if not script.is_file():
@@ -124,7 +199,7 @@ def start_analyze() -> dict[str, Any]:
         )
     try:
         proc = subprocess.run(
-            ["sbatch", str(script)],
+            ["sbatch", str(script), interest_s, email_s, mode_s],
             cwd=str(root),
             capture_output=True,
             text=True,
@@ -159,6 +234,9 @@ def start_analyze() -> dict[str, Any]:
         "stdout": out,
         "stderr": err or None,
         "project_root": str(root),
+        "interest_passed": interest_s,
+        "email_passed": email_s,
+        "mode_passed": mode_s,
     }
 
 
@@ -220,6 +298,19 @@ def status(
 
     log_path, log_tail = _latest_slurm_log_tail(max_lines=log_lines)
 
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    progress_parts = [
+        f"[{ts}] · squeue · {scope} · exit={rc}",
+        out or "(squeue stdout empty)",
+    ]
+    if err:
+        progress_parts.append(f"stderr: {err}")
+    progress_parts.append("")
+    if log_path:
+        progress_parts.append(f"--- Slurm log: {log_path} ---")
+    progress_parts.append(log_tail or "(no log tail)")
+    progress_text = "\n".join(progress_parts)
+
     return {
         "squeue_scope": scope,
         "squeue_returncode": rc,
@@ -228,6 +319,7 @@ def status(
         "latest_log_path": log_path,
         "latest_log_tail": log_tail,
         "slurm_logs_dir": str(slurm_logs_dir()),
+        "progress_text": progress_text,
     }
 
 

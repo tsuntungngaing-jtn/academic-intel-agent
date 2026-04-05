@@ -5,7 +5,7 @@ Unified CLI entry for Academic Intel Agent.
 Usage::
 
     python main.py crawl
-    python main.py analyze [--interest ...]
+    python main.py analyze [--interest ...] [--email user@xjtlu.edu.cn]
     python main.py interactive [--report path]
     python main.py figures <pdf> <doi> [--out-dir path]
 """

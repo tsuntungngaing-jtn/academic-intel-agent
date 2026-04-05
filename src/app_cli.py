@@ -20,6 +20,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
     pa = sub.add_parser("analyze", help="用 DeepSeek 分析 works JSONL，生成 final_report 与 Markdown")
     pa.add_argument("--interest", type=str, default=None)
+    pa.add_argument(
+        "--email",
+        type=str,
+        default=None,
+        help="OpenAlex 礼貌池邮箱（设置 OPENALEX_MAILTO，可选）",
+    )
+    pa.add_argument(
+        "--mode",
+        type=str,
+        default=None,
+        choices=("recent", "related"),
+        help="recent=追踪前沿；related=深度探索（由 API / Slurm 传入）",
+    )
     pa.add_argument("--works", type=Path, default=None)
     pa.add_argument("--out", type=Path, default=None)
     pa.add_argument("--model", type=str, default=None)
@@ -84,6 +97,10 @@ def main(argv: list[str] | None = None) -> int:
         extra: list[str] = []
         if args.interest is not None:
             extra += ["--interest", args.interest]
+        if args.email is not None:
+            extra += ["--email", args.email]
+        if args.mode is not None:
+            extra += ["--mode", args.mode]
         if args.works is not None:
             extra += ["--works", str(args.works)]
         if args.out is not None:

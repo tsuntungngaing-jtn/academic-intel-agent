@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from crawler.client import MAX_PER_PAGE, OpenAlexClient
+from crawler.client import MAX_PER_PAGE, OpenAlexClient, read_academic_analyze_mode
 
 from .crawl_state import load_state, state_path_for, write_state
 
@@ -24,6 +24,7 @@ def fetch_works_to_file(
     max_records: Optional[int] = None,
     resume: bool = True,
     client: Optional[OpenAlexClient] = None,
+    extra_params: Optional[dict[str, Any]] = None,
 ) -> int:
     """
     Append works as JSON lines to ``path``.
@@ -35,6 +36,7 @@ def fetch_works_to_file(
     path.parent.mkdir(parents=True, exist_ok=True)
     state_path = state_path_for(path)
     ox = client or OpenAlexClient()
+    extra_for_state: dict[str, Any] = dict(extra_params) if extra_params else {}
 
     start_cursor: Optional[str] = None
     mode = "a"
@@ -44,7 +46,13 @@ def fetch_works_to_file(
         mode = "w"
     else:
         st = load_state(state_path)
-        if st and st.get("filter") == filter_expr and st.get("search") == search:
+        st_extra = st.get("extra_params") if isinstance(st.get("extra_params"), dict) else {}
+        if (
+            st
+            and st.get("filter") == filter_expr
+            and st.get("search") == search
+            and st_extra == extra_for_state
+        ):
             start_cursor = st.get("next_cursor")
             if isinstance(start_cursor, str) and start_cursor:
                 logger.info("resuming from saved cursor for %s", path.name)
@@ -60,6 +68,7 @@ def fetch_works_to_file(
             search=search,
             per_page=MAX_PER_PAGE,
             cursor=start_cursor,
+            extra_params=extra_params,
         ):
             for work in results:
                 out.write(json.dumps(work, ensure_ascii=False) + "\n")
@@ -81,6 +90,7 @@ def fetch_works_to_file(
                     {
                         "filter": filter_expr,
                         "search": search,
+                        "extra_params": extra_for_state,
                         "next_cursor": next_cursor,
                     },
                 )
@@ -96,7 +106,7 @@ def run_crawl_main() -> None:
 
     from core.config import default_data_dir
     from core.env import load_environment
-    from crawler.client import build_recent_publication_filter
+    from crawler.client import build_recent_frontier_filter
     from utils.stdio import configure_logging
 
     load_environment()
@@ -105,10 +115,26 @@ def run_crawl_main() -> None:
     data_dir = default_data_dir()
     out_file = data_dir / "works_sample.jsonl"
 
+    analyze_mode = read_academic_analyze_mode()
     custom_filter = os.getenv("OPENALEX_FILTER", "").strip()
-    recent_days_raw = os.getenv("OPENALEX_RECENT_DAYS", "90").strip()
-    recent_days = int(recent_days_raw) if recent_days_raw.isdigit() else 90
-    filter_expr = custom_filter or build_recent_publication_filter(recent_days)
+    sort_override = os.getenv("OPENALEX_SORT", "").strip()
+    extra_params: dict[str, Any] = {}
+
+    if custom_filter:
+        filter_expr = custom_filter
+        if sort_override:
+            extra_params["sort"] = sort_override
+        elif analyze_mode == "recent":
+            extra_params["sort"] = "publication_date:desc"
+    elif analyze_mode == "related":
+        filter_expr = None
+        if sort_override:
+            extra_params["sort"] = sort_override
+    else:
+        filter_expr = build_recent_frontier_filter()
+        extra_params["sort"] = "publication_date:desc"
+        if sort_override:
+            extra_params["sort"] = sort_override
 
     search = os.getenv("OPENALEX_SEARCH", "").strip() or None
     if not search:
@@ -122,8 +148,10 @@ def run_crawl_main() -> None:
     resume = os.getenv("OPENALEX_RESUME", "0").strip().lower() not in ("0", "false", "no")
 
     logger.info(
-        "crawl filter=%r search=%r (override filter with OPENALEX_FILTER if needed)",
+        "crawl ACADEMIC_ANALYZE_MODE=%r filter=%r sort=%r search=%r",
+        analyze_mode,
         filter_expr,
+        extra_params.get("sort"),
         search,
     )
 
@@ -133,5 +161,6 @@ def run_crawl_main() -> None:
         search=search,
         max_records=max_records,
         resume=resume,
+        extra_params=extra_params if extra_params else None,
     )
     logger.info("wrote %s works to %s", n, out_file)

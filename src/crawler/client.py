@@ -33,13 +33,41 @@ def build_recent_publication_filter(days: int = 90) -> str:
     return f"from_publication_date:{start.isoformat()},to_publication_date:{end.isoformat()}"
 
 
+def read_academic_analyze_mode() -> str:
+    """
+    Crawl / works search strategy: ``recent`` (时间窗 + 新到旧) or ``related`` (全时间 + 相关性).
+
+    Set by ``python main.py analyze --mode`` or ``ACADEMIC_ANALYZE_MODE`` in the environment.
+    """
+    m = (os.environ.get("ACADEMIC_ANALYZE_MODE") or "recent").strip().lower()
+    return m if m in ("recent", "related") else "recent"
+
+
+def build_recent_frontier_filter() -> str:
+    """
+    Lower bound for “追踪前沿” mode (no ``to_publication_date`` cap).
+
+    Override with env ``OPENALEX_RECENT_FROM_DATE`` (ISO date, default ``2024-01-01``).
+    """
+    raw = (os.getenv("OPENALEX_RECENT_FROM_DATE") or "2024-01-01").strip() or "2024-01-01"
+    return f"from_publication_date:{raw}"
+
+
 class OpenAlexError(Exception):
     """Raised when the API returns an error or an unexpected payload."""
 
 
 def _env_mailto() -> Optional[str]:
-    v = os.getenv("OPENALEX_MAILTO", "").strip()
-    return v or None
+    v = (os.getenv("OPENALEX_MAILTO") or "").strip()
+    if v:
+        return v
+    try:
+        from core.config import POLITE_POOL_EMAIL
+
+        p = (POLITE_POOL_EMAIL or "").strip()
+        return p or None
+    except ImportError:
+        return None
 
 
 @dataclass
@@ -137,7 +165,16 @@ class OpenAlexClient:
             params.update(dict(extra_params))
 
         next_cursor: Optional[str] = cursor
+        strategy_logged = False
         while True:
+            if not strategy_logged:
+                mode = read_academic_analyze_mode()
+                logger.info(
+                    "[策略引擎] 模式：%s -> 正在应用对应的搜索过滤器...",
+                    mode,
+                )
+                strategy_logged = True
+
             if next_cursor:
                 params["cursor"] = next_cursor
             elif "cursor" in params:

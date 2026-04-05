@@ -10,8 +10,9 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from core import config
 from core.config import default_data_dir
-from core.interest import resolve_research_interest
+from core.interest import InterestGenerator
 from core.models import DEFAULT_DEEPSEEK_API_BASE, DEFAULT_DEEPSEEK_MODEL
 from core.env import load_environment
 from engine.openalex_work import extract_journal_name, extract_work_doi, work_to_prompt_payload
@@ -96,6 +97,19 @@ def run_analyze_cli(argv: Optional[list[str]] = None) -> int:
         help="研究需求（否则读 RESEARCH_INTEREST / USER_RESEARCH_NEED 或交互输入）",
     )
     parser.add_argument(
+        "--email",
+        type=str,
+        default=None,
+        help="OpenAlex 礼貌池邮箱；非空时为本进程设置 OPENALEX_MAILTO",
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="recent",
+        choices=("recent", "related"),
+        help="recent=追踪前沿；related=深度探索（写入 ACADEMIC_ANALYZE_MODE）",
+    )
+    parser.add_argument(
         "--works",
         type=Path,
         default=None,
@@ -131,6 +145,10 @@ def run_analyze_cli(argv: Optional[list[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    config.apply_cli_email_override(args.email)
+
+    os.environ["ACADEMIC_ANALYZE_MODE"] = args.mode
+
     api_key = (os.getenv("DEEPSEEK_API_KEY") or "").strip()
     if not api_key:
         logger.error("请设置环境变量 DEEPSEEK_API_KEY")
@@ -145,10 +163,18 @@ def run_analyze_cli(argv: Optional[list[str]] = None) -> int:
         return 1
 
     try:
-        interest = resolve_research_interest(args.interest)
+        interest = InterestGenerator(start_keyword=args.interest).resolve()
     except SystemExit as e:
         logger.error("%s", e)
         return 1
+
+    email_disp = config.POLITE_POOL_EMAIL or "(未填)"
+    logger.info(
+        "[引擎] 分析模式=%s；正在为用户 %s 处理专属研究课题：%s",
+        args.mode,
+        email_disp,
+        interest,
+    )
 
     ok, fail = analyze_works_file(
         research_interest=interest,

@@ -8,3 +8,6 @@ def load_environment() -> None:
         load_dotenv()
     except ImportError:
         pass
+    from core import config
+
+    config.sync_polite_pool_email_from_environment()

@@ -1,4 +1,9 @@
-"""Map OpenAlex ``work`` JSON objects to prompt-oriented fields."""
+"""
+Map OpenAlex ``work`` JSON objects to prompt-oriented fields.
+
+Crawl-time search policy (``recent`` vs ``related``) lives in
+``crawler.client`` / ``storage.crawl_jsonl`` and reads ``ACADEMIC_ANALYZE_MODE``.
+"""
 
 from __future__ import annotations
 
