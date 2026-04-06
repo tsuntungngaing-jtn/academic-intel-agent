@@ -62,6 +62,16 @@ type StartResponse = {
   stderr?: string | null;
 };
 
+type StartErrorDetail = {
+  message?: string;
+  error_detail?: string;
+  stderr_formatted?: string | null;
+  stdout_formatted?: string | null;
+  stderr?: string | null;
+  stdout?: string;
+  returncode?: number;
+};
+
 type StatusResponse = {
   squeue_stdout?: string;
   squeue_stderr?: string | null;
@@ -84,15 +94,21 @@ function jobLinePresent(squeueOut: string, jobId: string): boolean {
   return lines.some((line) => line.includes(jobId));
 }
 
+type ConsoleBlock = {
+  text: string;
+  tone?: "normal" | "fatal";
+};
+
 function appendConsoleBlock(
-  prev: string[],
+  prev: ConsoleBlock[],
   block: string,
-): string[] {
+  tone: ConsoleBlock["tone"] = "normal",
+): ConsoleBlock[] {
   const trimmed = block.trimEnd();
   if (!trimmed) {
     return prev;
   }
-  return [...prev, trimmed];
+  return [...prev, { text: trimmed, tone }];
 }
 
 export function AnalyzePanel() {
@@ -105,8 +121,9 @@ export function AnalyzePanel() {
   const [searchQuery, setSearchQuery] = useState("");
   const [deepseekKey, setDeepseekKey] = useState("");
   const [analyzeMode, setAnalyzeMode] = useState<AnalyzeMode>("recent");
+  const [hasReceivedProgress, setHasReceivedProgress] = useState(false);
 
-  const [consoleBlocks, setConsoleBlocks] = useState<string[]>([]);
+  const [consoleBlocks, setConsoleBlocks] = useState<ConsoleBlock[]>([]);
   const terminalScrollRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -201,6 +218,9 @@ export function AnalyzePanel() {
         ]
           .filter(Boolean)
           .join("\n");
+      if (block.trim()) {
+        setHasReceivedProgress(true);
+      }
 
       const stillInQueue =
         id != null && jobLinePresent(data.squeue_stdout ?? "", id);
@@ -243,6 +263,7 @@ export function AnalyzePanel() {
     setError(null);
     clearTimer();
     setPhase("polling");
+    setHasReceivedProgress(false);
 
     const modeLabel =
       analyzeMode === "recent" ? "近期前沿" : "高相关度深度探索";
@@ -269,6 +290,16 @@ export function AnalyzePanel() {
       });
       const data = (await r.json()) as StartResponse & { detail?: unknown };
       if (!r.ok) {
+        if (data.detail && typeof data.detail === "object") {
+          const d = data.detail as StartErrorDetail;
+          throw new Error(
+            d.error_detail ||
+              d.stderr_formatted ||
+              d.stdout_formatted ||
+              d.message ||
+              JSON.stringify(data.detail),
+          );
+        }
         const msg =
           typeof data.detail === "string"
             ? data.detail
@@ -300,10 +331,11 @@ export function AnalyzePanel() {
       }
     } catch (e: unknown) {
       setPhase("error");
-      setError(e instanceof Error ? e.message : String(e));
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      setError(errorMsg);
       clearTimer();
       setConsoleBlocks((prev) =>
-        appendConsoleBlock(prev, `> ERROR: ${e instanceof Error ? e.message : String(e)}`),
+        appendConsoleBlock(prev, `[致命错误] 超算拒绝任务：${errorMsg}`, "fatal"),
       );
     }
   };
@@ -501,6 +533,14 @@ export function AnalyzePanel() {
             aria-live="polite"
             aria-label="任务状态控制台"
           >
+            {phase === "polling" && !hasReceivedProgress ? (
+              <div className="mb-3 text-amber-300">
+                [通讯] 正在穿越学校防火墙，调配 GPU 计算资源...
+                <span className="ml-1 inline-block animate-pulse text-emerald-300">
+                  ▋
+                </span>
+              </div>
+            ) : null}
             {consoleBlocks.length === 0 ? (
               <span className="text-emerald-600/70">
                 $ 等待任务启动…（每 {POLL_MS / 1000}s 轮询 /status · progress_text）
@@ -509,9 +549,13 @@ export function AnalyzePanel() {
               consoleBlocks.map((block, i) => (
                 <pre
                   key={i}
-                  className="mb-4 whitespace-pre-wrap break-words border-b border-emerald-800/30 pb-4 text-emerald-400 last:mb-0 last:border-b-0 last:pb-0"
+                  className={`mb-4 whitespace-pre-wrap break-words border-b pb-4 last:mb-0 last:border-b-0 last:pb-0 ${
+                    block.tone === "fatal"
+                      ? "border-red-800/50 text-red-400"
+                      : "border-emerald-800/30 text-emerald-400"
+                  }`}
                 >
-                  {block}
+                  {block.text}
                 </pre>
               ))
             )}

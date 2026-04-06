@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Academic Intel — Stanford UI",
+  title: "Academic Intel — 论文搜罗宝葫芦",
   description: "Paper cards from final_report.jsonl",
 };
 

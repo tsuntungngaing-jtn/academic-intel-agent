@@ -21,10 +21,10 @@ export default function Home() {
   return (
     <main className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
       <h1 className="mb-2 font-serif text-2xl font-semibold text-slate-950">
-        Stanford Academic UI
+        论文搜罗宝葫芦
       </h1>
       <p className="mb-8 text-sm text-slate-600">
-        米灰背景 <code className="text-xs">paper-bg</code>，卡片左侧 Stanford
+        米灰背景 <code className="text-xs">paper-bg</code>，卡片左侧 论文搜罗宝葫芦
         红装饰条；插图路径使用可选链，例如{" "}
         <code className="text-xs">data?.ai?.extracted_figures?.[0]</code>。
       </p>

@@ -32,13 +32,6 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from core.hpc_paths import (
-    final_report_jsonl,
-    hpc_project_root,
-    slurm_logs_dir,
-    slurm_username,
-)
-
 logger = logging.getLogger(__name__)
 
 SBATCH_JOB_ID_RE = re.compile(r"Submitted batch job (\d+)", re.IGNORECASE)
@@ -48,6 +41,40 @@ _runtime_proxy: dict[str, Optional[str]] = {
     "http_proxy": None,
     "https_proxy": None,
 }
+
+
+def _project_root() -> Path:
+    """Resolve project root from env override or this file location."""
+    raw = os.getenv("ACADEMIC_INTEL_HOME", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def _logs_dir() -> Path:
+    raw = os.getenv("ACADEMIC_INTEL_SLURM_LOG_DIR", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (_project_root() / "logs").resolve()
+
+
+def _data_dir() -> Path:
+    for key in ("ACADEMIC_INTEL_DATA_DIR", "DATA_DIR"):
+        raw = os.getenv(key, "").strip()
+        if raw:
+            return Path(raw).expanduser().resolve()
+    return (_project_root() / "data").resolve()
+
+
+def _final_report_jsonl() -> Path:
+    return (_data_dir() / "final_report.jsonl").resolve()
+
+
+def _slurm_username() -> str:
+    raw = os.getenv("ACADEMIC_INTEL_SLURM_USER", "").strip()
+    if raw:
+        return raw
+    return os.getenv("USER", "").strip() or os.getenv("USERNAME", "").strip() or "unknown"
 
 
 def _cors_origins() -> list[str]:
@@ -132,6 +159,13 @@ def _sanitize_mode(value: Optional[str]) -> str:
     return "recent"
 
 
+def _one_line_text(value: str) -> str:
+    """Normalize multiline process output into a compact single line."""
+    if not value:
+        return ""
+    return " | ".join([line.strip() for line in value.splitlines() if line.strip()])
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -190,7 +224,11 @@ def start_analyze(
         shlex.quote(mode_s),
     )
 
-    root = hpc_project_root()
+    root = _project_root()
+    logs_dir = _logs_dir()
+    data_dir = _data_dir()
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
     script = root / "scripts" / "submit_job.sh"
     if not script.is_file():
         raise HTTPException(
@@ -223,9 +261,20 @@ def start_analyze(
 
     if proc.returncode != 0:
         logger.error("sbatch failed rc=%s stdout=%s stderr=%s", proc.returncode, out, err)
+        stderr_fmt = _one_line_text(err)
+        stdout_fmt = _one_line_text(out)
+        detail_text = stderr_fmt or stdout_fmt or f"sbatch exited with code {proc.returncode}"
         raise HTTPException(
             status_code=500,
-            detail={"message": "sbatch failed", "stdout": out, "stderr": err, "returncode": proc.returncode},
+            detail={
+                "message": "sbatch failed",
+                "error_detail": detail_text,
+                "stderr_formatted": stderr_fmt or None,
+                "stdout_formatted": stdout_fmt or None,
+                "stdout": out,
+                "stderr": err,
+                "returncode": proc.returncode,
+            },
         )
 
     return {
@@ -268,7 +317,7 @@ def _tail_text_file(path: Path, max_lines: int = 48) -> str:
 
 
 def _latest_slurm_log_tail(max_lines: int = 48) -> tuple[Optional[str], str]:
-    log_dir = slurm_logs_dir()
+    log_dir = _logs_dir()
     if not log_dir.is_dir():
         return None, f"(log directory missing: {log_dir})"
     candidates = sorted(
@@ -288,7 +337,7 @@ def status(
     log_lines: int = Query(48, ge=1, le=500),
 ) -> dict[str, Any]:
     """Slurm queue for the configured user and tail of the newest job log on GPFS."""
-    user = slurm_username()
+    user = _slurm_username()
     if job_id and job_id.strip():
         rc, out, err = _run_squeue(["-j", job_id.strip()])
         scope = f"job {job_id.strip()}"
@@ -318,7 +367,7 @@ def status(
         "squeue_stderr": err or None,
         "latest_log_path": log_path,
         "latest_log_tail": log_tail,
-        "slurm_logs_dir": str(slurm_logs_dir()),
+        "slurm_logs_dir": str(_logs_dir()),
         "progress_text": progress_text,
     }
 
@@ -351,7 +400,7 @@ def latest_results(
     limit: int = Query(1, ge=1, le=500, description="Number of trailing JSONL records to return"),
 ) -> dict[str, Any]:
     """Last ``limit`` objects from ``data/final_report.jsonl`` (newest at end of list)."""
-    path = final_report_jsonl()
+    path = _final_report_jsonl()
     records = _read_last_jsonl_records(path, limit)
     return {
         "path": str(path),
