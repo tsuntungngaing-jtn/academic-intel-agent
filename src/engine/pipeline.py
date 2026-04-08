@@ -143,6 +143,11 @@ def run_analyze_cli(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="追加写入输出文件（默认每次运行覆盖 final_report.jsonl）",
     )
+    parser.add_argument(
+        "--crawl-first",
+        action="store_true",
+        help="先根据研究兴趣解析 OPENALEX 检索式、抓取 works_sample.jsonl，再分析（UI / Slurm 推荐）",
+    )
     args = parser.parse_args(argv)
 
     config.apply_cli_email_override(args.email)
@@ -158,14 +163,52 @@ def run_analyze_cli(argv: Optional[list[str]] = None) -> int:
     works_path = args.works or data_dir / "works_sample.jsonl"
     out_path = args.out or data_dir / "final_report.jsonl"
 
-    if not works_path.is_file():
-        logger.error("找不到输入文件: %s", works_path)
-        return 1
-
     try:
         interest = InterestGenerator(start_keyword=args.interest).resolve()
     except SystemExit as e:
         logger.error("%s", e)
+        return 1
+
+    if args.crawl_first:
+        if not interest.strip():
+            logger.error("--crawl-first 需要非空研究兴趣（或环境变量 RESEARCH_INTEREST）")
+            return 1
+        from crawler.openalex_search import resolve_openalex_search_for_interest
+        from storage.crawl_jsonl import run_crawl_main
+
+        try:
+            resolved = resolve_openalex_search_for_interest(
+                interest,
+                api_key=api_key,
+                api_base=args.api_base,
+                model=args.model,
+            )
+        except ValueError as e:
+            logger.error("%s", e)
+            return 1
+        logger.info(
+            "[引擎] OPENALEX_SEARCH 解析 strategy=%s meta.count %s→%s 检索式=%r",
+            resolved.strategy,
+            resolved.count_before,
+            resolved.count_after,
+            resolved.query[:500],
+        )
+        os.environ["OPENALEX_SEARCH"] = resolved.query
+        os.environ["OPENALEX_RESUME"] = "0"
+        written = run_crawl_main()
+        if written <= 0:
+            logger.error("抓取结果为空，已中止分析；请调整关键词或检查网络/OpenAlex 状态。")
+            return 1
+
+    if not works_path.is_file():
+        logger.error("找不到输入文件: %s", works_path)
+        return 1
+    try:
+        if works_path.stat().st_size == 0:
+            logger.error("输入文件为空: %s（需要先 crawl 或关闭 --crawl-first 并提供有效 JSONL）", works_path)
+            return 1
+    except OSError as e:
+        logger.error("无法读取输入文件: %s (%s)", works_path, e)
         return 1
 
     email_disp = config.POLITE_POOL_EMAIL or "(未填)"

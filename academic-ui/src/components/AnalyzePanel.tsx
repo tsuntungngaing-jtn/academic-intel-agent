@@ -254,7 +254,21 @@ export function AnalyzePanel() {
 
   const handleStartAnalyze = async () => {
     const interest = searchQuery.trim();
-    const interestDisp = interest || "(未填)";
+    if (!interest) {
+      setPhase("error");
+      setError(
+        "请填写研究兴趣。留空时超算任务不会带上课题，也不会触发「先抓取再分析」，结果可能与当前关键词无关。",
+      );
+      setConsoleBlocks((prev) =>
+        appendConsoleBlock(
+          prev,
+          "[致命错误] 研究兴趣为空：已阻止提交。",
+          "fatal",
+        ),
+      );
+      return;
+    }
+    const interestDisp = interest;
     const emailPayload =
       emailLocal.trim() === ""
         ? null
@@ -270,11 +284,11 @@ export function AnalyzePanel() {
     setConsoleBlocks([
       `[系统] 模式已锁定：${modeLabel}…`,
       `[系统] 指令已封装：课题=${interestDisp}，准备发送至西浦超算中心...`,
-      "> academic_intel · session start",
+      "> academic_intel · session start（含 --crawl-first：按课题抓取 OpenAlex 后再分析）",
       emailPayload
         ? `> OPENALEX_MAILTO 提示：请在超算环境 export OPENALEX_MAILTO=${emailPayload}`
         : "> 提示：填写学校邮箱后，请在超算 .env 或 shell 中设置 OPENALEX_MAILTO 以进入礼貌池",
-      interest ? `> 研究检索备忘（前端）: ${interest}` : "",
+      `> 研究检索备忘（前端）: ${interest}`,
       "> 正在提交 sbatch …",
     ].filter(Boolean));
 
@@ -448,6 +462,14 @@ export function AnalyzePanel() {
             placeholder="关键词或一句话描述你的研究方向…"
             className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-stanford-red focus:outline-none focus:ring-1 focus:ring-stanford-red"
           />
+          <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
+            OpenAlex 全文检索以英文为主；中文课题会在超算上自动探针并用 DeepSeek
+            扩展为英文检索式后再抓取。若需完全手工控制，可在超算{" "}
+            <code className="rounded bg-slate-100 px-1">.env</code> 设置{" "}
+            <code className="rounded bg-slate-100 px-1">OPENALEX_SEARCH</code>{" "}
+            并改用命令行单独{" "}
+            <code className="rounded bg-slate-100 px-1">crawl</code>。
+          </p>
         </div>
 
         {/* 分析模式：搜索框下方、控制台（及按钮）上方 */}

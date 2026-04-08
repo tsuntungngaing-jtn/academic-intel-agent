@@ -100,8 +100,11 @@ def fetch_works_to_file(
     return written
 
 
-def run_crawl_main() -> None:
-    """CLI entry: read crawl settings from environment and write ``works_sample.jsonl``."""
+def run_crawl_main() -> int:
+    """CLI entry: read crawl settings from environment and write ``works_sample.jsonl``.
+
+    Returns the number of works written this run.
+    """
     import os
 
     from core.config import default_data_dir
@@ -164,3 +167,4 @@ def run_crawl_main() -> None:
         extra_params=extra_params if extra_params else None,
     )
     logger.info("wrote %s works to %s", n, out_file)
+    return n

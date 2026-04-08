@@ -30,6 +30,8 @@ source activate academic_agent
 py_cmd=(python main.py analyze)
 if [ -n "$USER_INTEREST" ]; then
   py_cmd+=(--interest "$USER_INTEREST")
+  # 与 UI 课题一致：先解析 OpenAlex 检索式并抓取，再分析（避免沿用旧 works_sample.jsonl）
+  py_cmd+=(--crawl-first)
 fi
 if [ -n "$USER_EMAIL" ]; then
   py_cmd+=(--email "$USER_EMAIL")

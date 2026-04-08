@@ -39,6 +39,11 @@ def _build_parser() -> argparse.ArgumentParser:
     pa.add_argument("--api-base", type=str, default=None)
     pa.add_argument("--delay", type=float, default=None)
     pa.add_argument("--append", action="store_true")
+    pa.add_argument(
+        "--crawl-first",
+        action="store_true",
+        help="先抓取再分析（与 engine.pipeline 一致）",
+    )
 
     pi = sub.add_parser("interactive", help="按编号浏览 final_report.jsonl，可选 --cite 查引用")
     pi.add_argument("--report", type=Path, default=None)
@@ -113,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
             extra += ["--delay", str(args.delay)]
         if args.append:
             extra.append("--append")
+        if getattr(args, "crawl_first", False):
+            extra.append("--crawl-first")
         return run_analyze_cli(extra)
 
     if args.command == "interactive":
